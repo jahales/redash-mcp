@@ -35,7 +35,8 @@ The server requires the following environment variables:
 
 Optional variables:
 - `REDASH_TIMEOUT`: Timeout for API requests in milliseconds (default: 30000)
-- `REDASH_MAX_RESULTS`: Maximum number of results to return (default: 1000)
+- `REDASH_READ_ONLY`: Defaults to `true`. Exposes metadata and cached-result tools and limits Redash requests to the corresponding GET endpoints. Set it to `false` to enable the full tool catalog.
+- `REDASH_MAX_RESULTS`: Maximum rows returned by `get_cached_query_results` and `get_query_results_csv` (default: 200). A caller can request fewer rows with `max_rows`.
 - `REDASH_EXTRA_HEADERS`: Extra HTTP headers to include with every Redash request. Accepts either a JSON object string or a semicolon/comma-separated list of `key=value` pairs.
 - `REDASH_SOCKS_PROXY`: SOCKS proxy URL for routing requests through a proxy (e.g., `socks5h://localhost:1080`). Use `socks5h://` (with `h`) to delegate DNS resolution to the proxy, which is required for internal hostnames that don't resolve on the local machine.
 - `MCP_TRANSPORT`: MCP transport to use. Supported values are `stdio`, `http`, and `streamable-http` (default: `stdio`).
@@ -61,6 +62,13 @@ REDASH_EXTRA_HEADERS=CF-Access-Client-Id=<client_id>;CF-Access-Client-Secret=<cl
 Notes:
 - The `Authorization` header is managed by the server (`Key <REDASH_API_KEY>`) and cannot be overridden.
 - All extra headers are added to every request made to Redash.
+- Use an HTTPS Redash URL. HTTP is accepted for loopback development and tests.
+
+## Read-only operation
+
+In read-only mode the server lists query, dashboard, visualization and widget metadata tools and cached-result tools. Query resource reads return metadata. Query execution, CSV refresh, schema queries and mutation tools require read-write mode.
+
+Use `get_cached_query_results` to get JSON, or `get_query_results_csv` for CSV plus a separate summary. Both report the result's timestamp, row count, number of rows returned and whether the result was truncated. The server limits cached-result text to 64 KiB and upstream read-only response bodies to 8 MiB. A cache miss is returned as an error. Redash can only retrieve cached results this way for non-parameterized queries.
 
 ## Installation
 
@@ -76,7 +84,7 @@ Notes:
    pnpm install
    ```
 
-3. Create a `.env` file with your Redash configuration:
+3. Create an environment file with your Redash configuration. The server loads only environment variables supplied by the launcher:
    ```
    REDASH_URL=https://your-redash-instance.com
    REDASH_API_KEY=your_api_key
@@ -91,7 +99,7 @@ Notes:
 
 5. Start the server:
    ```bash
-   pnpm start
+   node --env-file=/path/to/redash.env dist/cli.js
    ```
 
    The default transport is stdio, which is the mode expected by most desktop MCP clients. The stdio entrypoint accepts both 2025-era MCP clients and clients that negotiate the current protocol.

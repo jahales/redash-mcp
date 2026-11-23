@@ -1,8 +1,9 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import * as dotenv from 'dotenv';
 import { Readable } from 'node:stream';
 import { SocksProxyAgent } from 'socks-proxy-agent';
 import { logger, type LogFields } from './logger.js';
+import { isReadOnlyMode, isReadOnlyRequest } from './readOnly.js';
+import { parseExtraHeaders } from './toolOutput.js';
 import {
   buildBigQuerySchemaPageQuery,
   readBigQueryDataSourceLocation,
@@ -21,8 +22,6 @@ import {
   getRequestRedashAuthContext,
   type RedashRequestAuthContext,
 } from './requestAuth.js';
-
-dotenv.config({ quiet: true });
 
 // Redash API types
 export interface RedashQuery {
@@ -100,6 +99,31 @@ export interface RedashQueryResult {
   };
   runtime: number;
   retrieved_at: string;
+}
+
+const MAX_READ_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Redash returns both a bare result and a query_result envelope. */
+export function unpackQueryResult(payload: unknown): RedashQueryResult {
+  const result = isRecord(payload) && "query_result" in payload ? payload.query_result : payload;
+  const data = isRecord(result) ? result.data : undefined;
+  if (!isRecord(result) || typeof result.id !== "number" || !Number.isSafeInteger(result.id) || result.id < 1 || !isRecord(data)
+      || !Array.isArray(data.columns) || !data.columns.every(column => isRecord(column) && typeof column.name === "string")
+      || !Array.isArray(data.rows) || !data.rows.every(isRecord)) {
+    throw new Error("Redash did not return a valid query result.");
+  }
+  return result as unknown as RedashQueryResult;
+}
+
+function encodePathSegment(value: string): string {
+  if (value === "" || value === "." || value === "..") {
+    throw new Error("Invalid Redash URL path segment.");
+  }
+  return encodeURIComponent(value);
 }
 
 export interface RedashDashboard {
@@ -352,8 +376,16 @@ export class RedashClient {
       : 30000;
 
     if (!this.baseUrl) {
-      throw new Error('REDASH_URL must be provided in .env file');
+      throw new Error('REDASH_URL must be provided.');
     }
+    const baseUrl = URL.parse(this.baseUrl);
+    const localHttp = baseUrl?.protocol === "http:"
+      && ["localhost", "127.0.0.1", "[::1]"].includes(baseUrl.hostname);
+    if (!baseUrl || (baseUrl.protocol !== "https:" && !localHttp)
+        || baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash) {
+      throw new Error("REDASH_URL must be an HTTPS URL without credentials, a query string or a fragment. Loopback HTTP is allowed.");
+    }
+    const readOnly = isReadOnlyMode();
 
     const defaultHeaders: Record<string, string> = {
       'Content-Type': 'application/json'
@@ -367,13 +399,9 @@ export class RedashClient {
       defaultHeaders['Authorization'] = `Key ${this.apiKey}`;
     }
 
-    const extraHeaders = this.parseExtraHeaders();
-
-    // Prevent accidental override of Authorization header
-    if (extraHeaders['Authorization'] || extraHeaders['authorization']) {
-      delete extraHeaders['Authorization'];
-      delete extraHeaders['authorization'];
-    }
+    const extraHeaders = Object.fromEntries(
+      Object.entries(parseExtraHeaders()).filter(([name]) => name.toLowerCase() !== "authorization"),
+    );
 
     const axiosConfig: Record<string, unknown> = {
       baseURL: this.baseUrl,
@@ -381,7 +409,9 @@ export class RedashClient {
         ...defaultHeaders,
         ...extraHeaders,
       },
-      timeout: this.timeoutMs
+      timeout: this.timeoutMs,
+      maxRedirects: 0,
+      ...(readOnly ? { maxContentLength: MAX_READ_RESPONSE_BYTES } : {}),
     };
 
     const socksProxy = process.env.REDASH_SOCKS_PROXY;
@@ -401,6 +431,9 @@ export class RedashClient {
     // header set above (the static REDASH_API_KEY) - no behavior change for
     // existing stdio users.
     this.client.interceptors.request.use((config) => {
+      if (readOnly && !isReadOnlyRequest(config.method, config.url)) {
+        throw new Error("The Redash endpoint is disabled in read-only mode.");
+      }
       const requestApiKey = getRequestRedashApiKey();
       const apiKey = requestApiKey || this.apiKey;
 
@@ -417,37 +450,6 @@ export class RedashClient {
 
       return config;
     });
-  }
-
-  // Parse extra headers from env var `REDASH_EXTRA_HEADERS`.
-  // Supports JSON object or `key=value;key2=value2` format.
-  private parseExtraHeaders(): Record<string, string> {
-    const raw = process.env.REDASH_EXTRA_HEADERS;
-    if (!raw) return {};
-
-    // Try JSON first
-    try {
-      const obj = JSON.parse(raw);
-      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-        return Object.fromEntries(
-          Object.entries(obj as Record<string, unknown>)
-            .filter(([k, v]) => typeof k === 'string' && v !== undefined && v !== null)
-            .map(([k, v]) => [k, String(v)])
-        );
-      }
-    } catch { /* fall through to key=value parser */ }
-
-    // Fallback: parse `key=value; key2=value2` or comma-separated
-    const headers: Record<string, string> = {};
-    const parts = raw.split(/[;,]/);
-    for (const part of parts) {
-      const idx = part.indexOf('=');
-      if (idx === -1) continue;
-      const key = part.slice(0, idx).trim();
-      const value = part.slice(idx + 1).trim();
-      if (key) headers[key] = value;
-    }
-    return headers;
   }
 
   // Get all queries (with pagination)
@@ -737,8 +739,9 @@ export class RedashClient {
 
   // Get a specific dashboard by slug
   async getDashboardBySlug(slug: string): Promise<RedashDashboard> {
+    const segment = encodePathSegment(slug);
     try {
-      const response = await this.client.get(`/api/dashboards/${slug}`, {
+      const response = await this.client.get(`/api/dashboards/${segment}`, {
         params: { legacy: null }
       });
       return response.data;
@@ -832,6 +835,22 @@ export class RedashClient {
     }
   }
 
+  async getCachedQueryResult(queryId: number): Promise<RedashQueryResult> {
+    const path = `/api/queries/${queryId}/results`;
+    try {
+      const { data } = await this.client.get<unknown>(path, { maxContentLength: MAX_READ_RESPONSE_BYTES });
+      return unpackQueryResult(data);
+    } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
+        throw new Error("No cached result is available for this query.");
+      }
+      if (axios.isAxiosError(error)) {
+        throw redashRequestError("Could not load the cached query result", error);
+      }
+      throw error;
+    }
+  }
+
   // Get query results as CSV
   async getQueryResultsAsCsv(queryId: number, refresh = false): Promise<string> {
     const path = `/api/queries/${queryId}/results.csv`;
@@ -846,7 +865,7 @@ export class RedashClient {
       // Optionally refresh the query before fetching results
       if (refresh) {
         logger.debug(`Refreshing query ${queryId} before fetching CSV results`, requestFields);
-        await this.executeQuery(queryId);
+        await this.executeQuery(queryId, undefined, 0);
       }
 
       logger.debug(`Fetching CSV results for query ${queryId}`, requestFields);
@@ -1103,8 +1122,9 @@ export class RedashClient {
 
   // Get public dashboard by token
   async getPublicDashboard(token: string): Promise<RedashDashboard> {
+    const segment = encodePathSegment(token);
     try {
-      const response = await this.client.get(`/api/dashboards/public/${token}`);
+      const response = await this.client.get(`/api/dashboards/public/${segment}`);
       return response.data;
     } catch (error) {
       logger.error(`Error fetching public dashboard: ${error}`);
@@ -1532,8 +1552,7 @@ export class RedashClient {
   }
 }
 
-// Lazily create the client so credentials are validated on first use rather
-// than when dotenv is loaded during module import.
+// Lazily create the client so importing the server does not require credentials.
 let instance: RedashClient | undefined;
 
 export function getRedashClient(): RedashClient {

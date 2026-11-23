@@ -91,7 +91,7 @@ describe('RedashClient', () => {
     it('should throw error if REDASH_URL is not set', () => {
       delete process.env.REDASH_URL;
       expect(() => new RedashClient()).toThrow(
-        'REDASH_URL must be provided in .env file'
+        'REDASH_URL must be provided.'
       );
     });
 
@@ -118,6 +118,7 @@ describe('RedashClient', () => {
           'Content-Type': 'application/json',
         },
         timeout: 30000,
+        maxRedirects: 0,
       });
     });
 
@@ -734,6 +735,12 @@ describe('RedashClient', () => {
     });
   });
 
+  it.each([".", ".."])("rejects dashboard path segment %s before making a request", async (segment) => {
+    await expect(client.getDashboardBySlug(segment)).rejects.toThrow("Invalid Redash URL path segment");
+    await expect(client.getPublicDashboard(segment)).rejects.toThrow("Invalid Redash URL path segment");
+    expect(mockAxiosInstance.get).not.toHaveBeenCalled();
+  });
+
   describe('getDashboardBySlug', () => {
     it('should fetch a dashboard by slug with legacy parameter', async () => {
       const mockDashboard = {
@@ -848,6 +855,7 @@ describe('RedashClient', () => {
 
       expect(mockAxiosInstance.post).toHaveBeenCalledWith('/api/queries/1/results', {
         parameters: undefined,
+        max_age: 0,
       });
       expect(mockAxiosInstance.get).toHaveBeenCalledWith('/api/queries/1/results.csv', {
         responseType: 'text',

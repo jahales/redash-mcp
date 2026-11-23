@@ -21,8 +21,8 @@ describe("Redash MCP server", () => {
     jest.restoreAllMocks();
   });
 
-  it("defines all 67 public tools", () => {
-    expect(toolDefinitions).toHaveLength(67);
+  it("defines all 68 public tools", () => {
+    expect(toolDefinitions).toHaveLength(68);
   });
 
   it("advertises the published package version", async () => {
@@ -55,7 +55,7 @@ describe("Redash MCP server", () => {
         type: "object",
         properties: {
           queryId: {
-            description: "ID of the query to get",
+            description: "ID of the saved query",
           },
         },
         required: ["queryId"],
@@ -65,7 +65,7 @@ describe("Redash MCP server", () => {
       expect(listQueries?.inputSchema).toMatchObject({
         properties: {
           page: { description: "Page number (starts at 1)" },
-          pageSize: { description: "Number of results per page" },
+          pageSize: { description: "Number of results per page (maximum 100)" },
           q: { description: "Search query" },
         },
       });
@@ -228,6 +228,30 @@ describe("Redash MCP server", () => {
     }
   });
 
+  it("uses the freshly executed result for bounded CSV refresh", async () => {
+    const execute = jest.spyOn(redashClient, "executeQuery").mockResolvedValue({
+      query_result: {
+        id: 88, data: { columns: [{ name: "value" }], rows: [{ value: "fresh" }] },
+      },
+    } as never);
+    const cached = jest.spyOn(redashClient, "getCachedQueryResult").mockResolvedValue({
+      id: 86, data: { columns: [{ name: "value" }], rows: [{ value: "stale" }] },
+    } as never);
+    const connection = await connectDirectClient();
+    try {
+      const result = await connection.client.callTool({
+        name: "get_query_results_csv", arguments: { queryId: 42, refresh: true },
+      });
+      const [data, summary] = result.content as Array<{ text: string }>;
+      expect(data.text).toBe("value\r\nfresh");
+      expect(JSON.parse(summary.text)).toMatchObject({ query_result_id: 88, returned_rows: 1 });
+      expect(execute).toHaveBeenCalledWith(42, undefined, 0);
+      expect(cached).not.toHaveBeenCalled();
+    } finally {
+      await connection.close();
+    }
+  });
+
   it("reports resource listing failures to the MCP client", async () => {
     jest.spyOn(redashClient, "getQueries").mockRejectedValue(new Error("Redash unavailable"));
     jest.spyOn(redashClient, "getDashboards").mockResolvedValue({ results: [] } as never);
@@ -255,6 +279,115 @@ describe("Redash MCP server", () => {
     } finally {
       await client.close();
       await handle.close();
+    }
+  });
+});
+
+describe("default read-only mode", () => {
+  beforeEach(() => {
+    delete process.env.REDASH_READ_ONLY;
+    jest.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.env.REDASH_READ_ONLY = "false";
+    jest.restoreAllMocks();
+  });
+
+  it("omits writes and execution from discovery and rejects direct calls", async () => {
+    const connection = await connectDirectClient();
+    const execute = jest.spyOn(redashClient, "executeQuery").mockResolvedValue({} as never);
+    try {
+      const { tools } = await connection.client.listTools();
+      expect(tools.map(tool => tool.name)).toEqual(expect.arrayContaining([
+        "list_queries", "get_query", "get_cached_query_results", "get_query_results_csv",
+      ]));
+      expect(tools.every(tool => tool.annotations?.readOnlyHint)).toBe(true);
+      for (const name of ["create_query", "execute_query", "execute_adhoc_query", "get_schema"]) {
+        expect(tools.some(tool => tool.name === name)).toBe(false);
+        const outcome = await connection.client.callTool({ name, arguments: {} })
+          .catch((error: Error) => error);
+        expect(outcome instanceof Error || outcome.isError === true).toBe(true);
+      }
+      const refresh = await connection.client.callTool({
+        name: "get_query_results_csv", arguments: { queryId: 42, refresh: true },
+      });
+      expect(refresh.isError).toBe(true);
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("reads resource metadata without execution and projects out an upstream query key", async () => {
+    const getQuery = jest.spyOn(redashClient, "getQuery").mockResolvedValue({
+      id: 42, name: "Saved report", api_key: "upstream-query-key", query: "SELECT 42",
+    } as never);
+    const execute = jest.spyOn(redashClient, "executeQuery").mockResolvedValue({} as never);
+    const connection = await connectDirectClient();
+    try {
+      const query = await connection.client.readResource({ uri: "redash://query/42" });
+      const text = resourceText(query.contents[0]);
+      expect(JSON.parse(text)).toEqual({ query: { id: 42, name: "Saved report" } });
+      const tool = await connection.client.callTool({ name: "get_query", arguments: { queryId: 42 } });
+      expect(JSON.stringify(tool)).not.toContain("upstream-query-key");
+      expect(getQuery).toHaveBeenCalledWith(42);
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("keeps the registered profile when the environment changes", async () => {
+    jest.spyOn(redashClient, "getQuery").mockResolvedValue({ id: 42, name: "Stored report" } as never);
+    const execute = jest.spyOn(redashClient, "executeQuery").mockResolvedValue({} as never);
+    const connection = await connectDirectClient();
+    try {
+      process.env.REDASH_READ_ONLY = "false";
+      await connection.client.readResource({ uri: "redash://query/42" });
+      const refresh = await connection.client.callTool({
+        name: "get_query_results_csv", arguments: { queryId: 42, refresh: true },
+      });
+      expect(refresh.isError).toBe(true);
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      await connection.close();
+    }
+  });
+
+  it("returns cached rows with counts and truncation, including for CSV", async () => {
+    const getCached = jest.spyOn(redashClient, "getCachedQueryResult").mockResolvedValue({
+      id: 87,
+      retrieved_at: "2026-11-23T00:00:00Z",
+      data: {
+        columns: [{ name: "name" }, { name: "api_key" }],
+        rows: [{ name: "first, entry", api_key: "nested-query-key" }, { name: "second entry" }],
+      },
+    } as never);
+    const connection = await connectDirectClient();
+    try {
+      const json = await connection.client.callTool({
+        name: "get_cached_query_results", arguments: { queryId: 42, max_rows: 1 },
+      });
+      const jsonText = (json.content as Array<{ text: string }>)[0].text;
+      expect(JSON.parse(jsonText)).toMatchObject({
+        query_result_id: 87, row_count: 2, returned_rows: 1, truncated: true,
+        data: { columns: [{ name: "name" }], rows: [{ name: "first, entry" }] },
+      });
+      expect(jsonText).not.toContain("nested-query-key");
+      const csv = await connection.client.callTool({
+        name: "get_query_results_csv", arguments: { queryId: "42", max_rows: 1 },
+      });
+      const invalidId = await connection.client.callTool({
+        name: "get_cached_query_results", arguments: { queryId: true },
+      });
+      expect(invalidId.isError).toBe(true);
+      const [data, summary] = csv.content as Array<{ text: string }>;
+      expect(data.text).toBe('name\r\n"first, entry"');
+      expect(JSON.parse(summary.text)).toMatchObject({ row_count: 2, returned_rows: 1, truncated: true });
+      expect(getCached).toHaveBeenCalledTimes(2);
+    } finally {
+      await connection.close();
     }
   });
 });

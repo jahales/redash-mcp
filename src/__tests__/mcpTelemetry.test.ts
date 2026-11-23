@@ -121,6 +121,9 @@ describe("MCP telemetry", () => {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
       await client.readResource({ uri: "example://queries/42" });
+      await expect(client.readResource({
+        uri: "example://reader:sample-uri-secret@queries/43?key=sample-uri-secret",
+      })).rejects.toThrow();
       await client.getPrompt({ name: "analyze-code", arguments: { code: "const x = 1" } });
       await provider.forceFlush();
 
@@ -129,6 +132,11 @@ describe("MCP telemetry", () => {
         "mcp.method.name": "resources/read",
         "mcp.resource.uri": "example://queries/42",
       });
+      const failedResource = exporter.getFinishedSpans().find(
+        span => span.name === "resources/read" && span.status.code === SpanStatusCode.ERROR,
+      );
+      expect(failedResource?.attributes["mcp.resource.uri"]).toBe("example://queries/43");
+      expect(failedResource?.status.message).toBeUndefined();
       expect(exporter.getFinishedSpans()).not.toContainEqual(
         expect.objectContaining({ name: expect.stringContaining("example://queries/42") }),
       );

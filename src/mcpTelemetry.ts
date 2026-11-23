@@ -39,6 +39,7 @@ import {
   METRIC_MCP_SERVER_SESSION_DURATION,
 } from "@opentelemetry/semantic-conventions/incubating";
 import { isToolContentCaptureEnabled } from "./telemetry.js";
+import { safeJson, secretRedactor } from "./toolOutput.js";
 
 const INSTRUMENTATION_NAME = "@suthio/redash-mcp";
 const tracer = trace.getTracer(INSTRUMENTATION_NAME);
@@ -240,7 +241,10 @@ class InstrumentedTransport implements Transport {
     if (error === undefined && response && isJSONRPCErrorResponse(response)) {
       const statusCode = String(response.error.code);
       errorType = statusCode;
-      statusDescription = response.error.message;
+      // Resource errors can echo a client-supplied URI.
+      if (!operation.method.startsWith("resources/")) {
+        statusDescription = response.error.message;
+      }
       operation.span.setAttribute(ATTR_RPC_RESPONSE_STATUS_CODE, statusCode);
       operation.metricAttributes[ATTR_RPC_RESPONSE_STATUS_CODE] = statusCode;
     } else if (
@@ -261,7 +265,7 @@ class InstrumentedTransport implements Transport {
       && !toolError
       && isToolContentCaptureEnabled()
     ) {
-      operation.span.setAttribute(ATTR_GEN_AI_TOOL_CALL_RESULT, safeJson(response.result));
+      operation.span.setAttribute(ATTR_GEN_AI_TOOL_CALL_RESULT, serializeCapturedContent(response.result, true));
     }
 
     finishOperation(
@@ -316,7 +320,7 @@ function operationAttributes(
   };
 
   if (isJSONRPCRequest(message)) {
-    attributes[ATTR_JSONRPC_REQUEST_ID] = String(message.id);
+    attributes[ATTR_JSONRPC_REQUEST_ID] = secretRedactor()(String(message.id));
   }
   if (protocolVersion) {
     attributes[ATTR_MCP_PROTOCOL_VERSION] = protocolVersion;
@@ -335,7 +339,7 @@ function operationAttributes(
     if (isToolContentCaptureEnabled()) {
       const args = readParams(message)?.arguments;
       if (args !== undefined) {
-        attributes[ATTR_GEN_AI_TOOL_CALL_ARGUMENTS] = safeJson(args);
+        attributes[ATTR_GEN_AI_TOOL_CALL_ARGUMENTS] = serializeCapturedContent(args);
       }
     }
   } else if (message.method === "prompts/get" && target) {
@@ -344,7 +348,7 @@ function operationAttributes(
 
   const resourceUri = operationResourceUri(message);
   if (resourceUri) {
-    attributes[ATTR_MCP_RESOURCE_URI] = resourceUri;
+    attributes[ATTR_MCP_RESOURCE_URI] = secretRedactor()(resourceUri);
   }
 
   return attributes;
@@ -390,12 +394,13 @@ function finishOperation(
 
   if (resolvedErrorType) {
     span.setAttribute("error.type", resolvedErrorType);
+    const redact = secretRedactor();
     span.setStatus({
       code: SpanStatusCode.ERROR,
-      ...(statusDescription ? { message: statusDescription } : {}),
+      ...(statusDescription ? { message: redact(statusDescription) } : {}),
     });
     if (error instanceof Error) {
-      span.recordException(error);
+      span.recordException({ name: redact(error.name), message: redact(error.message) });
     }
   }
 
@@ -445,7 +450,7 @@ function operationSpanName(message: Extract<JSONRPCMessage, { method: string }>)
 function operationTarget(message: Extract<JSONRPCMessage, { method: string }>): string | undefined {
   const params = readParams(message);
   if (message.method === "tools/call" || message.method === "prompts/get") {
-    return typeof params?.name === "string" ? params.name : undefined;
+    return typeof params?.name === "string" ? secretRedactor()(params.name) : undefined;
   }
   return undefined;
 }
@@ -462,7 +467,13 @@ function operationResourceUri(
     return undefined;
   }
   const uri = readParams(message)?.uri;
-  return typeof uri === "string" ? uri : undefined;
+  const parsed = typeof uri === "string" ? URL.parse(uri) : null;
+  if (!parsed) return undefined;
+  parsed.username = "";
+  parsed.password = "";
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.href;
 }
 
 function resolveProtocolVersion(
@@ -532,9 +543,9 @@ function errorName(error: unknown): string {
   return error instanceof Error && error.name ? error.name : "error";
 }
 
-function safeJson(value: unknown): string {
+function serializeCapturedContent(value: unknown, parseJsonText = false): string {
   try {
-    return JSON.stringify(value);
+    return safeJson(value, parseJsonText);
   } catch {
     return "[unserializable]";
   }

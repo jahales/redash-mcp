@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Default to read-only operation with metadata, cached results and a matching Redash endpoint allowlist. Set REDASH_READ_ONLY=false to enable the full catalog.
+- Add get_cached_query_results and enforce configurable row and byte limits for cached JSON and CSV.
+- Add tool titles and annotations. Query resource reads return only metadata in read-only mode.
+- Redact credentials from read-only responses and application logs. Require HTTPS for remote Redash instances and use explicit launcher environment configuration.
+
 ## [v0.1.2](https://github.com/suthio/redash-mcp/compare/v0.1.1...v0.1.2) - 2026-11-21
 
 - chore(deps): bump sigstore/cosign-installer from 4.1.2 to 4.1.3 by @dependabot[bot] in https://github.com/suthio/redash-mcp/pull/129

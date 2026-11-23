@@ -38,7 +38,7 @@ async function startConfiguredServer(config: ServerConfig): Promise<ServerHandle
     // stdio's original fail-fast behavior.
     if (!process.env.REDASH_API_KEY) {
       throw new Error(
-        "REDASH_API_KEY must be provided in .env file (required for the stdio transport)."
+        "REDASH_API_KEY must be provided (required for the stdio transport)."
       );
     }
 

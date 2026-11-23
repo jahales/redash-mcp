@@ -50,6 +50,7 @@ import {
   type ResolvedTelemetryConfig,
 } from "./telemetryConfig.js";
 import { PACKAGE_VERSION } from "./packageInfo.js";
+import { safeJson, secretRedactor } from "./toolOutput.js";
 
 const SERVICE_NAME = "redash-mcp";
 const MCP_DURATION_BUCKETS = [0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 30, 60, 120, 300];
@@ -128,6 +129,11 @@ async function initializeTelemetryRuntime(options: InitializeTelemetryOptions): 
   const logRecordProcessors = createLogRecordProcessors(config);
   const instrumentations: Instrumentation[] = [
     new HttpInstrumentation({
+      ignoreOutgoingRequestHook: request => {
+        const path = request.path ?? "";
+        return /\/api\/dashboards\/public\//.test(requestPath(path))
+          || secretRedactor()(path) !== path;
+      },
       ignoreIncomingRequestHook: (request) => {
         const path = requestPath(request.url);
         return (path === "/metrics" && mcpHttpPath !== "/metrics")
@@ -413,11 +419,11 @@ function parseDiagLogLevel(value: string | undefined): DiagLogLevel {
 
 function writeDiag(level: string, message: string, args: unknown[]): void {
   const suffix = args.length > 0 ? ` ${args.map(formatUnknownError).join(" ")}` : "";
-  process.stderr.write(`[OTEL ${level}] ${message}${suffix}\n`);
+  process.stderr.write(secretRedactor()(`[OTEL ${level}] ${message}${suffix}\n`));
 }
 
 function telemetryWarning(message: string): void {
-  process.stderr.write(`[OTEL WARN] ${message}\n`);
+  process.stderr.write(secretRedactor()(`[OTEL WARN] ${message}\n`));
 }
 
 function formatUnknownError(value: unknown): string {
@@ -428,8 +434,8 @@ function formatUnknownError(value: unknown): string {
     return value;
   }
   try {
-    return JSON.stringify(value);
+    return safeJson(value);
   } catch {
-    return String(value);
+    return "[unserializable]";
   }
 }

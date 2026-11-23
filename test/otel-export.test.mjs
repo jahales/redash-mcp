@@ -69,6 +69,8 @@ test("exports correlated MCP traces, metrics, and logs over OTLP/HTTP JSON", { t
     arguments: { queryId: 42 },
   });
   await client.callTool({ name: "get_query", arguments: {} });
+  await client.callTool({ name: "list_queries", arguments: { q: "test-header-secret" } });
+  await client.callTool({ name: "get_public_dashboard", arguments: { token: "fixture-public-token" } });
   await client.readResource({ uri: "redash://query/42" });
   await assert.rejects(
     client.request({ method: "custom/missing", params: {} }, z.object({})),
@@ -144,7 +146,7 @@ test("exports correlated MCP traces, metrics, and logs over OTLP/HTTP JSON", { t
   const csvSpan = spans.find((span) => span.name === "tools/call get_query_results_csv");
   assert.ok(csvSpan, "the get_query_results_csv MCP span should be exported");
   const csvToolResult = JSON.parse(spanAttributes(csvSpan)["gen_ai.tool.call.result"]);
-  assert.equal(csvToolResult.content[0].text, "account,confidential_total\ninternal,1250\n");
+  assert.equal(csvToolResult.content[0].text, "account,confidential_total\r\ninternal,1250");
 
   const transportSpans = spans.filter((span) => {
     return span.name === "POST /redash-mcp"
@@ -230,6 +232,11 @@ test("exports correlated MCP traces, metrics, and logs over OTLP/HTTP JSON", { t
   });
   assert.equal(child.stderr().includes("rejected_secret"), false);
   assert.equal(JSON.stringify(failedCreateAttributes).includes("test-api-key"), false);
+
+  const exported = JSON.stringify(collector.payloads);
+  for (const secret of ["test-api-key", "test-header-secret", "fixture-public-token", "fixture-query-key"]) {
+    assert.equal(exported.includes(secret), false, "exports should not contain fixture credentials");
+  }
 
   const metrics = collector.payloads.metrics.flatMap(flattenMetrics);
   const operationMetrics = metrics.filter((metric) => metric.name === "mcp.server.operation.duration");
@@ -327,23 +334,22 @@ async function startFakeRedash(t) {
       body = { count: 1, page: 1, page_size: 25, results: [{ id: 42, name: "Revenue" }] };
     } else if (request.method === "GET" && url.pathname === "/api/queries/42") {
       body = { id: 42, name: "Revenue", query: "select 42", data_source_id: 1 };
-    } else if (request.method === "POST" && url.pathname === "/api/queries/42/results") {
-      await readBody(request);
+    } else if (url.pathname === "/api/queries/42/results") {
+      if (request.method === "POST") await readBody(request);
       body = {
         query_result: {
+          id: 87,
           data: {
             columns: [
               { name: "account", type: "string" },
               { name: "confidential_total", type: "integer" },
             ],
-            rows: [{ account: "internal", confidential_total: 1250 }],
+            rows: [{ account: "internal", confidential_total: 1250, api_key: "fixture-query-key" }],
           },
         },
       };
-    } else if (request.method === "GET" && url.pathname === "/api/queries/42/results.csv") {
-      response.writeHead(200, { "content-type": "text/csv" });
-      response.end("account,confidential_total\ninternal,1250\n");
-      return;
+    } else if (request.method === "GET" && url.pathname === "/api/dashboards/public/fixture-public-token") {
+      body = { id: 47, name: "Public dashboard", api_key: "fixture-public-token" };
     } else if (request.method === "POST" && url.pathname === "/api/queries") {
       const requestBody = JSON.parse(await readBody(request));
       if (requestBody.name === "Rejected query definition") {
@@ -386,6 +392,8 @@ async function startInstrumentedServer(t, options) {
       ...process.env,
       REDASH_URL: options.redashUrl,
       REDASH_API_KEY: "test-api-key",
+      REDASH_EXTRA_HEADERS: "x-fixture-access=test-header-secret",
+      REDASH_READ_ONLY: "false",
       OTEL_TEST_MCP_PATH: options.httpPath,
       OTEL_EXPORTER_OTLP_ENDPOINT: options.collectorUrl,
       OTEL_EXPORTER_OTLP_PROTOCOL: "http/json",
