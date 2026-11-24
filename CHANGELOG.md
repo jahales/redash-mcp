@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Publish as `@jahales/redash-mcp` from jahales/redash-mcp, with npm provenance.
 - Default to read-only operation with metadata, cached results and a matching Redash endpoint allowlist. Set REDASH_READ_ONLY=false to enable the full catalog.
 - Add get_cached_query_results and enforce configurable row and byte limits for cached JSON and CSV.
 - Add tool titles and annotations. Query resource reads return only metadata in read-only mode.

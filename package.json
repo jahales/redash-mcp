@@ -1,14 +1,14 @@
 {
-  "name": "@suthio/redash-mcp",
-  "version": "0.1.2",
+  "name": "@jahales/redash-mcp",
+  "version": "0.2.0",
   "description": "MCP server for Redash integration",
-  "homepage": "https://github.com/suthio/redash-mcp#readme",
+  "homepage": "https://github.com/jahales/redash-mcp#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/suthio/redash-mcp.git"
+    "url": "git+https://github.com/jahales/redash-mcp.git"
   },
   "bugs": {
-    "url": "https://github.com/suthio/redash-mcp/issues"
+    "url": "https://github.com/jahales/redash-mcp/issues"
   },
   "type": "module",
   "packageManager": "pnpm@11.18.0",

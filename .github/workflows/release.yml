@@ -43,7 +43,7 @@ jobs:
           npm pkg fix
           npm pkg set \
             repository.type=git \
-            repository.url=https://github.com/suthio/redash-mcp
+            repository.url=https://github.com/jahales/redash-mcp
 
       - name: Resolve release metadata
         id: release
@@ -140,7 +140,7 @@ jobs:
 
       - name: Check npm publication status
         id: npm-status
-        if: github.repository == 'suthio/redash-mcp'
+        if: github.repository == 'jahales/redash-mcp'
         shell: bash
         env:
           PACKAGE_NAME: ${{ steps.release.outputs.package_name }}
@@ -269,8 +269,8 @@ jobs:
             --repo ${{ github.repository }}
 
       - name: Publish to npm
-        if: github.repository == 'suthio/redash-mcp' && steps.npm-status.outputs.published != 'true'
-        run: npm publish --access public
+        if: github.repository == 'jahales/redash-mcp' && steps.npm-status.outputs.published != 'true'
+        run: npm publish --access public --provenance
 
       - name: Tag Docker image
         shell: bash

@@ -9,7 +9,7 @@ import {
 
 import { isSensitiveField, secretRedactor } from "./toolOutput.js";
 
-const otelLogger = logs.getLogger("@suthio/redash-mcp");
+const otelLogger = logs.getLogger("@jahales/redash-mcp");
 
 /** Log levels understood by MCP clients and mapped to OTel severities. */
 export enum LogLevel {

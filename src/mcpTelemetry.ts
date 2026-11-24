@@ -41,7 +41,7 @@ import {
 import { isToolContentCaptureEnabled } from "./telemetry.js";
 import { safeJson, secretRedactor } from "./toolOutput.js";
 
-const INSTRUMENTATION_NAME = "@suthio/redash-mcp";
+const INSTRUMENTATION_NAME = "@jahales/redash-mcp";
 const tracer = trace.getTracer(INSTRUMENTATION_NAME);
 const meter = metrics.getMeter(INSTRUMENTATION_NAME);
 const operationDuration = meter.createHistogram(METRIC_MCP_SERVER_OPERATION_DURATION, {

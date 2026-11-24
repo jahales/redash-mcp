@@ -1,7 +1,7 @@
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 
-const PACKAGE_NAME = "@suthio/redash-mcp";
+const PACKAGE_NAME = "@jahales/redash-mcp";
 
 interface PackageManifest {
   name?: unknown;

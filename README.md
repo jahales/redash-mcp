@@ -1,5 +1,7 @@
 # Redash MCP Server
 
+> Fork of [suthio/redash-mcp](https://github.com/suthio/redash-mcp), published as `@jahales/redash-mcp`. It defaults to read-only operation; see "Read-only operation" below.
+
 Model Context Protocol (MCP) server for integrating Redash with AI assistants like Claude.
 
 <a href="https://glama.ai/mcp/servers/j9bl90s3tw">
@@ -74,7 +76,7 @@ Use `get_cached_query_results` to get JSON, or `get_query_results_csv` for CSV p
 
 1. Clone this repository:
    ```bash
-   git clone https://github.com/suthio/redash-mcp.git
+   git clone https://github.com/jahales/redash-mcp.git
    cd redash-mcp
    ```
 
@@ -120,7 +122,7 @@ Add the following configuration (edit paths as needed):
       "command": "npx",
       "args": [
          "-y",
-         "@suthio/redash-mcp"
+         "@jahales/redash-mcp"
       ],
       "env": {
         "REDASH_API_KEY": "your-api-key",
@@ -276,10 +278,10 @@ Initialize telemetry before importing the main package so Node HTTP and Axios ar
 import {
   initializeTelemetry,
   shutdownTelemetry,
-} from "@suthio/redash-mcp/telemetry";
+} from "@jahales/redash-mcp/telemetry";
 
 await initializeTelemetry({ transport: "stdio" });
-const { createRedashMcpServer } = await import("@suthio/redash-mcp");
+const { createRedashMcpServer } = await import("@jahales/redash-mcp");
 const server = createRedashMcpServer();
 
 // Connect and use the server, then flush exporters during application shutdown.
@@ -293,10 +295,10 @@ When the embedding process exposes MCP over HTTP at `POST /redash-mcp`, pass tha
 import {
   initializeTelemetry,
   shutdownTelemetry,
-} from "@suthio/redash-mcp/telemetry";
+} from "@jahales/redash-mcp/telemetry";
 
 await initializeTelemetry({ transport: "http", httpPath: "/redash-mcp" });
-const { createRedashMcpServer } = await import("@suthio/redash-mcp");
+const { createRedashMcpServer } = await import("@jahales/redash-mcp");
 const server = createRedashMcpServer({
   networkTransport: "tcp",
   networkProtocolName: "http",
@@ -337,7 +339,7 @@ Container images are published to GitHub Container Registry for both `linux/amd6
 docker run --rm -p 127.0.0.1:3000:3000 \
   -e REDASH_URL=https://your-redash-instance.com \
   -e REDASH_API_KEY=your_api_key \
-  ghcr.io/suthio/redash-mcp:latest
+  ghcr.io/jahales/redash-mcp:latest
 ```
 
 The container runs Streamable HTTP internally on `0.0.0.0:3000`, while the example publishes that port on the host's loopback interface only. Its default Host and Origin allowlists accept localhost access. When placing the container behind an authenticated reverse proxy or a private cluster service, set `MCP_HTTP_ALLOWED_HOSTS` and `MCP_HTTP_ALLOWED_ORIGINS` to the concrete DNS names used by clients.
@@ -350,14 +352,14 @@ Published images are signed with keyless cosign and carry an SBOM, SLSA provenan
 # Signature
 cosign verify \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github.com/suthio/redash-mcp/\.github/workflows/release\.yml@' \
-  ghcr.io/suthio/redash-mcp:latest
+  --certificate-identity-regexp '^https://github.com/jahales/redash-mcp/\.github/workflows/release\.yml@' \
+  ghcr.io/jahales/redash-mcp:latest
 
 # Build provenance attestation
-gh attestation verify oci://ghcr.io/suthio/redash-mcp:latest --repo suthio/redash-mcp
+gh attestation verify oci://ghcr.io/jahales/redash-mcp:latest --repo jahales/redash-mcp
 
 # SBOM
-docker buildx imagetools inspect ghcr.io/suthio/redash-mcp:latest --format '{{json .SBOM}}'
+docker buildx imagetools inspect ghcr.io/jahales/redash-mcp:latest --format '{{json .SBOM}}'
 ```
 
 ## Available Tools
