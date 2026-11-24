@@ -755,7 +755,7 @@ describe('RedashClient', () => {
       const result = await client.getDashboardBySlug('test-dashboard');
 
       expect(mockAxiosInstance.get).toHaveBeenCalledWith('/api/dashboards/test-dashboard', {
-        params: { legacy: null }
+        params: { legacy: true }
       });
       expect(result).toEqual(mockDashboard);
     });

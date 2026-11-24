@@ -66,7 +66,7 @@ Notes:
 
 ## Read-only operation
 
-In read-only mode the server lists query, dashboard, visualization and widget metadata tools and cached-result tools. Query resource reads return metadata. Query execution, CSV refresh, schema queries and mutation tools require read-write mode.
+In read-only mode the server lists query and dashboard metadata tools and cached-result tools. To read widget or visualization metadata, use the parent dashboard or query. Stock Redash exposes those details through their parents. Query resource reads return metadata. Query execution, CSV refresh, schema queries and mutation tools require read-write mode.
 
 Use `get_cached_query_results` to get JSON, or `get_query_results_csv` for CSV plus a separate summary. Both report the result's timestamp, row count, number of rows returned and whether the result was truncated. The server limits cached-result text to 64 KiB and upstream read-only response bodies to 8 MiB. A cache miss is returned as an error. Redash can only retrieve cached results this way for non-parameterized queries.
 

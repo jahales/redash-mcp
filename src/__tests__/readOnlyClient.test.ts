@@ -3,14 +3,20 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { RedashClient } from "../redashClient.js";
 
-it("retrieves the cached result by GET and blocks execution before making a request", async () => {
+it("uses stock Redash routes for read-only calls and blocks execution before making a request", async () => {
   const requests: string[] = [];
   const fixture = { id: 87, data: { columns: [{ name: "name" }], rows: [{ name: "cached" }] } };
+  const dashboard = { id: 12, slug: "saved-report", widgets: [] };
   const server = createServer((request, response) => {
     requests.push(request.method + " " + request.url);
     if (request.method === "GET" && request.url === "/api/queries/42/results") {
       response.writeHead(200, { "Content-Type": "application/json" });
       response.end(JSON.stringify({ query_result: fixture }));
+    } else if (request.method === "GET"
+      && request.url?.startsWith("/api/dashboards/saved-report?")
+      && new URLSearchParams(request.url.split("?")[1]).has("legacy")) {
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify(dashboard));
     } else {
       response.writeHead(404).end();
     }
@@ -26,10 +32,15 @@ it("retrieves the cached result by GET and blocks execution before making a requ
 
   try {
     const client = new RedashClient();
+    await expect(client.getDashboardBySlug("saved-report")).resolves.toEqual(dashboard);
     await expect(client.getCachedQueryResult(42)).resolves.toEqual(fixture);
     await expect(client.getCachedQueryResult(43)).rejects.toThrow("No cached result");
     await expect(client.executeQuery(42)).rejects.toThrow("disabled in read-only mode");
-    expect(requests).toEqual(["GET /api/queries/42/results", "GET /api/queries/43/results"]);
+    expect(requests).toEqual([
+      "GET /api/dashboards/saved-report?legacy=true",
+      "GET /api/queries/42/results",
+      "GET /api/queries/43/results",
+    ]);
   } finally {
     if (previousUrl === undefined) delete process.env.REDASH_URL;
     else process.env.REDASH_URL = previousUrl;

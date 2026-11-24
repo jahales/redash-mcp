@@ -742,7 +742,7 @@ export class RedashClient {
     const segment = encodePathSegment(slug);
     try {
       const response = await this.client.get(`/api/dashboards/${segment}`, {
-        params: { legacy: null }
+        params: { legacy: true }
       });
       return response.data;
     } catch (error) {

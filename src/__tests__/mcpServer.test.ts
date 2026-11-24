@@ -294,7 +294,7 @@ describe("default read-only mode", () => {
     jest.restoreAllMocks();
   });
 
-  it("omits writes and execution from discovery and rejects direct calls", async () => {
+  it("omits writes, execution, and unsupported standalone reads from discovery", async () => {
     const connection = await connectDirectClient();
     const execute = jest.spyOn(redashClient, "executeQuery").mockResolvedValue({} as never);
     try {
@@ -303,7 +303,10 @@ describe("default read-only mode", () => {
         "list_queries", "get_query", "get_cached_query_results", "get_query_results_csv",
       ]));
       expect(tools.every(tool => tool.annotations?.readOnlyHint)).toBe(true);
-      for (const name of ["create_query", "execute_query", "execute_adhoc_query", "get_schema"]) {
+      for (const name of [
+        "create_query", "execute_query", "execute_adhoc_query", "get_schema",
+        "get_visualization", "get_widget", "get_widget_parameter_mappings",
+      ]) {
         expect(tools.some(tool => tool.name === name)).toBe(false);
         const outcome = await connection.client.callTool({ name, arguments: {} })
           .catch((error: Error) => error);
